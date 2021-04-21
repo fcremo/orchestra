@@ -1,12 +1,13 @@
-#@ load("@ytt:data", "data")
 #@ load("@ytt:overlay", "overlay")
+#@ load("@ytt:template", "template")
 #@ load("/lib/create_component.lib.yml", "single_build_component")
+#@ load("/lib/shell.lib.yml", "expand_args")
 
 #@ source_url = "https://github.com/libffi/libffi/releases/download/v3.3/libffi-3.3.tar.gz"
 
 #@yaml/text-templated-strings
 ---
-#@ def libffi_args():
+#@ def libffi_args(arch_args):
 license: LICENSE
 configure: |
   mkdir -p "$BUILD_DIR"
@@ -18,15 +19,35 @@ configure: |
     --disable-static \
     --disable-pax_emutramp \
     --disable-debug \
-    --prefix="$ORCHESTRA_ROOT"
+    (@= expand_args(arch_args["configure_args"]) @)
 build_system: make
 build_dependencies:
-  - host-c-toolchain
-  - glibc
+  - #@ template.replace(arch["build_dependencies"])
+#@ end
+
+---
+#@ def architectures():
+- name: "native"
+  component_prefix: ""
+  configure_args:
+    --prefix: "$ORCHESTRA_ROOT"
+  build_dependencies:
+    - host-c-toolchain
+    - glibc
+- name: "windows"
+  component_prefix: "windows/"
+  configure_args:
+    --host: "x86_64-w64-mingw32"
+    --prefix: "$ORCHESTRA_ROOT/x86_64-w64-mingw32"
+  build_dependencies:
+    - toolchain/win64/gcc
 #@ end
 
 #@overlay/match by=overlay.all, expects=1
 #@overlay/match-child-defaults missing_ok=True
+#@yaml/text-templated-strings
 ---
 components:
-  libffi: #@ single_build_component(**libffi_args())
+  #@ for arch in architectures():
+  (@= arch["component_prefix"] @)libffi: #@ single_build_component(**libffi_args(arch))
+  #@ end

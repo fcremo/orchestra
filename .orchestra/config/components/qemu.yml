@@ -1,11 +1,13 @@
 #@ load("@ytt:data", "data")
 #@ load("@ytt:overlay", "overlay")
+#@ load("@ytt:template", "template")
 #@ load("/lib/make.lib.yml", "make")
 #@ load("/lib/optimization_flavors.lib.yml", "typical_project_flavors")
+#@ load("/lib/shell.lib.yml", "expand_args")
 
 #@yaml/text-templated-strings
 ---
-#@ def qemu_component(use_asan=False):
+#@ def qemu_component(platform, use_asan=False):
 repository: qemu
 license: LICENSE
 default_build: optimized
@@ -19,9 +21,6 @@ builds:
         mkdir -p "$BUILD_DIR"
         cd "$BUILD_DIR";
         "$SOURCE_DIR/configure" \
-          --cc="(@= data.values.regular_c_compiler @)" \
-          --prefix="$ORCHESTRA_ROOT" \
-          --target-list=" arm-libtinycode arm-linux-user aarch64-libtinycode aarch64-linux-user i386-libtinycode i386-linux-user mips-libtinycode mips-linux-user mipsel-libtinycode mipsel-linux-user s390x-libtinycode s390x-linux-user x86_64-libtinycode x86_64-linux-user " \
           --disable-werror \
           --enable-llvm-helpers \
           --disable-kvm \
@@ -33,27 +32,61 @@ builds:
           --disable-gnutls \
           --disable-smartcard-nss \
           --disable-uuid \
+          --disable-sdl \
+          --disable-gtk \
+          --disable-vnc \
           --python="$(which python2)" \
           (@ if build_type == "Debug": @)--enable-debug (@ end @)\
-          --extra-cflags="(@= cflags @)"
+          --extra-cflags="(@= cflags @)" \
+          (@= expand_args(platform["configure_options"]) @)
       install: |
         cd "$BUILD_DIR"
         (@= make @) install
       build_dependencies:
-        - host-c-toolchain
-        - clang-release
-        - glibc
-        - llvm
+        - #@ template.replace(platform["build_dependencies"])
       dependencies:
-        - zlib
-        - glib
+        - #@ template.replace(platform["dependencies"])
       #@ if/end ndebug == False:
       ndebug: false
   #@ end
 #@ end
 
+---
+#@ def platforms():
+- name: native
+  component_prefix: ""
+  configure_options:
+    --cc: #@ data.values.regular_c_compiler
+    --prefix: "$ORCHESTRA_ROOT"
+    --target-list: " arm-libtinycode arm-linux-user aarch64-libtinycode aarch64-linux-user i386-libtinycode i386-linux-user mips-libtinycode mips-linux-user mipsel-libtinycode mipsel-linux-user s390x-libtinycode s390x-linux-user x86_64-libtinycode x86_64-linux-user "
+  build_dependencies:
+    - host-c-toolchain
+    - clang-release
+    - glibc
+    - llvm
+  dependencies:
+    - zlib
+    - glib
+- name: windows
+  component_prefix: "windows/"
+  configure_options:
+    --cc: #@ data.values.win64_c_compiler
+    --prefix: "$ORCHESTRA_ROOT/win64"
+    --cross-prefix: "x86_64-w64-mingw32-"
+    --target-list: "arm-libtinycode aarch64-libtinycode i386-libtinycode mips-libtinycode mipsel-libtinycode s390x-libtinycode x86_64-libtinycode"
+  #! TODO: find out what those should be
+  build_dependencies:
+    - toolchain/win64/gcc
+  dependencies:
+    - windows/zlib
+    - windows/glib
+#@ end
+
 #@overlay/match by=overlay.all, expects=1
 #@overlay/match-child-defaults missing_ok=True
+#@yaml/text-templated-strings
 ---
 components:
-  qemu: #@ qemu_component()
+  #@ for platform in platforms():
+  (@= platform["component_prefix"] @)qemu: #@ qemu_component(platform)
+  #@ end

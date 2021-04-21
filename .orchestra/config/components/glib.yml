@@ -1,13 +1,16 @@
 #@ load("@ytt:data", "data")
 #@ load("@ytt:overlay", "overlay")
+#@ load("@ytt:template", "template")
 #@ load("/lib/create_component.lib.yml", "single_build_component")
 #@ load("/lib/ninja.lib.yml", "ninja")
+#@ load("/lib/shell.lib.yml", "expand_args")
 
-#@ source_url = "https://download.gnome.org/sources/glib/2.64/glib-2.64.5.tar.xz"
+#@ source_url = "https://download.gnome.org/sources/glib/2.68/glib-2.68.0.tar.xz"
 
 #@yaml/text-templated-strings
 ---
-#@ def glib_args():
+#@ def glib_args(arch):
+#@ arch = dict(arch)
 license: source/COPYING
 configure: |
   mkdir -p "$BUILD_DIR/source"
@@ -15,14 +18,12 @@ configure: |
   find "$BUILD_DIR/source/" -name meson.build -exec sed -i "s|install\s*:\s*|install_rpath : '$RPATH_PLACEHOLDER/lib', \0|" {} \;
   sed -i 's|^.*HAVE_LANGINFO_.*1.*$||' "$BUILD_DIR/source/meson.build"
   sed -i -e '/subdir.*tests/d' "$BUILD_DIR"/source/{.,gio,glib}/meson.build
-
+  (@= arch.get("pre_configure_script", "") @)
   CC=clang \
   CXX=clang++ \
   meson setup \
     --buildtype plain \
     --libdir=lib \
-    --prefix "$ORCHESTRA_ROOT" \
-    --wrap-mode nodownload \
     -Ddefault_library=shared \
     -Dselinux=disabled \
     -Dxattr=false \
@@ -35,6 +36,7 @@ configure: |
     -Dfam=false \
     -Dinstalled_tests=false \
     -Dnls=disabled \
+    (@= expand_args(arch["configure_args"]) @) \
     "$BUILD_DIR" \
     "$BUILD_DIR/source"
 install: |
@@ -43,15 +45,65 @@ install: |
   (@= ninja @)
   (@= ninja @) install
 build_dependencies:
-  - host-c-toolchain
-  - glibc
+  - #@ template.replace(arch["build_dependencies"])
 dependencies:
-  - libffi
-  - zlib
+  - #@ template.replace(arch["dependencies"])
+#@ end
+
+---
+#@ def architectures():
+- name: "native"
+  component_prefix: ""
+  configure_args:
+    --prefix: "$ORCHESTRA_ROOT"
+    --wrap-mode: "nodownload"
+  build_dependencies:
+    - host-c-toolchain
+    - glibc
+  dependencies:
+    - libffi
+    - zlib
+- name: "windows"
+  component_prefix: "windows/"
+  configure_args:
+    --prefix: "$ORCHESTRA_ROOT/x86_64-w64-mingw32"
+    -Doss_fuzz: "disabled"
+    -Dlibelf: "disabled"
+    --cross-file: "$BUILD_DIR/cross_file.ini"
+  pre_configure_script: |
+    cat > "$BUILD_DIR/"cross_file.ini <<EOF
+    [host_machine]
+    system = 'windows'
+    cpu_family = 'x86_64'
+    cpu = 'x86_64'
+    endian = 'little'
+
+    [built-in options]
+    c_args = ['-DMINGW_HAS_SECURE_API=1']
+    c_link_args = []
+
+    [binaries]
+    c = 'x86_64-w64-mingw32-gcc'
+    cpp = 'x86_64-w64-mingw32-g++'
+    ar = 'x86_64-w64-mingw32-ar'
+    ld = 'x86_64-w64-mingw32-ld'
+    objcopy = 'x86_64-w64-mingw32-objcopy'
+    strip = 'x86_64-w64-mingw32-strip'
+    pkgconfig = 'x86_64-w64-mingw32-pkg-config'
+    windres = 'x86_64-w64-mingw32-windres'
+    EOF
+  build_dependencies:
+    - host-c-toolchain
+  dependencies:
+    - windows/libffi
+    - windows/zlib
 #@ end
 
 #@overlay/match by=overlay.all, expects=1
 #@overlay/match-child-defaults missing_ok=True
+#@yaml/text-templated-strings
 ---
 components:
-  glib: #@ single_build_component(**glib_args())
+  #@ for arch in architectures():
+  (@= arch["component_prefix"] @)glib: #@ single_build_component(**glib_args(arch))
+  #@ end

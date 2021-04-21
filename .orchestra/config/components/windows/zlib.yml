@@ -1,0 +1,39 @@
+#@ load("@ytt:data", "data")
+#@ load("@ytt:overlay", "overlay")
+#@ load("/lib/create_component.lib.yml", "single_build_component")
+
+#@ source_url = "https://zlib.net/zlib-1.2.11.tar.gz"
+
+#@yaml/text-templated-strings
+---
+#@ def zlib_args():
+license: README
+configure: |
+  mkdir -p "$BUILD_DIR"
+  extract.sh --into "$BUILD_DIR" (@= source_url @)
+  cd "$BUILD_DIR"
+  ./configure \
+    --shared \
+    --prefix="${ORCHESTRA_ROOT}/x86_64-w64-mingw32"
+install: |
+  cd "$BUILD_DIR"
+  export
+
+  make -fwin32/Makefile.gcc PREFIX=x86_64-w64-mingw32- SHARED_MODE=1
+
+  make -fwin32/Makefile.gcc install \
+    SHARED_MODE=1 \
+    DESTDIR="${TMP_ROOT}${ORCHESTRA_ROOT}/x86_64-w64-mingw32" \
+    BINARY_PATH=/bin \
+    LIBRARY_PATH=/lib \
+    INCLUDE_PATH=/include
+build_dependencies:
+  - host-c-toolchain
+  - glibc
+#@ end
+
+#@overlay/match by=overlay.all, expects=1
+#@overlay/match-child-defaults missing_ok=True
+---
+components:
+  windows/zlib: #@ single_build_component(**zlib_args())
