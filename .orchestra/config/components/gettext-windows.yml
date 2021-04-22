@@ -1,0 +1,49 @@
+#@ load("@ytt:data", "data")
+#@ load("@ytt:overlay", "overlay")
+#@ load("/lib/create_component.lib.yml", "single_build_component")
+
+#@ source_url = "https://ftp.gnu.org/gnu/gettext/gettext-0.21.tar.xz"
+
+#@yaml/text-templated-strings
+---
+#@ def gettext_args():
+configure: |
+  mkdir -p "$BUILD_DIR"
+  extract.sh --into "$BUILD_DIR" (@= source_url @)
+
+  cd "$BUILD_DIR"
+
+  ./configure \
+    --prefix="$ORCHESTRA_ROOT/x86_64-w64-mingw32" \
+    --disable-threads \
+    --with-included-textstyle \
+    --with-included-libtextstyle \
+    --without-tools \
+    --without-gettext-tools \
+    --disable-tools \
+    --disable-gettext-tools \
+    --disable-libasprintf \
+    --disable-acl \
+    --disable-java \
+    --disable-curses \
+    --disable-nls \
+    --disable-openmp \
+    --without-emacs \
+    --without-lispdir \
+    --without-cvs \
+    --host=x86_64-w64-mingw32 \
+    CFLAGS="-I../../../default/libtextstyle/lib"
+build_system: make
+build_dependencies:
+  - host-c-toolchain
+  - glibc
+dependencies:
+  - libffi
+  - zlib
+#@ end
+
+#@overlay/match by=overlay.all, expects=1
+#@overlay/match-child-defaults missing_ok=True
+---
+components:
+  gettext-windows: #@ single_build_component(**gettext_args())

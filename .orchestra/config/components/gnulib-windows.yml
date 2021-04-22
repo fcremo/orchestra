@@ -1,0 +1,38 @@
+#@ load("@ytt:data", "data")
+#@ load("@ytt:overlay", "overlay")
+#@ load("/lib/create_component.lib.yml", "single_build_component")
+
+#@ source_url = "https://git.savannah.gnu.org/git/gnulib.git"
+
+#@yaml/text-templated-strings
+---
+#@ def glib_args():
+configure: |
+  mkdir -p "$BUILD_DIR/"
+  cd "$BUILD_DIR"
+  git clone --depth=1 "(@= source_url @)" full_source
+  mkdir -p "$BUILD_DIR/source"
+  ./full_source/gnulib-tool --create-testdir --lib="libargp" --dir="source" argp
+
+  ./source/configure \
+    --prefix="$ORCHESTRA_ROOT/x86_64-w64-mingw32" \
+    --host=x86_64-w64-mingw32
+install: |
+  cd "$BUILD_DIR"
+  make -j16
+  mkdir -p "${TMP_ROOT}${ORCHESTRA_ROOT}/x86_64-w64-mingw32/"{lib,include}
+  cp gllib/*.a "${TMP_ROOT}${ORCHESTRA_ROOT}/x86_64-w64-mingw32/lib"
+  cp source/gllib/*.h "${TMP_ROOT}${ORCHESTRA_ROOT}/x86_64-w64-mingw32/include"
+build_dependencies:
+  - host-c-toolchain
+  - glibc
+dependencies:
+  - libffi
+  - zlib
+#@ end
+
+#@overlay/match by=overlay.all, expects=1
+#@overlay/match-child-defaults missing_ok=True
+---
+components:
+  gnulib-windows: #@ single_build_component(**glib_args())

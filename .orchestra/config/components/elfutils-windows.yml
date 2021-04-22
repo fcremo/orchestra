@@ -1,0 +1,40 @@
+#@ load("@ytt:data", "data")
+#@ load("@ytt:overlay", "overlay")
+#@ load("/lib/create_component.lib.yml", "single_build_component")
+
+#@ source_url = "https://sourceware.org/elfutils/ftp/0.181/elfutils-0.181.tar.bz2"
+
+#@yaml/text-templated-strings
+---
+#@ def elfutils_args():
+license: COPYING
+configure: |
+  mkdir -p "$BUILD_DIR"
+  extract.sh --into "$BUILD_DIR" "(@= source_url @)"
+  cd "$BUILD_DIR"
+  ./configure \
+    --disable-nls \
+    --disable-thread-safety \
+    --program-prefix=eu- \
+    --with-zlib \
+    --without-bzlib \
+    --without-lzma \
+    --host=x86_64-w64-mingw32 \
+    --prefix="$ORCHESTRA_ROOT/x86_64-w64-mingw32" \
+    --disable-debuginfod \
+    --disable-libdebuginfod \
+    --disable-symbol-versioning \
+    CFLAGS="-Wno-error"
+build_system: make
+build_dependencies:
+  - host-c-toolchain
+  - glibc
+dependencies:
+  - windows/zlib
+#@ end
+
+#@overlay/match by=overlay.all, expects=1
+#@overlay/match-child-defaults missing_ok=True
+---
+components:
+  elfutils-windows: #@ single_build_component(**elfutils_args())

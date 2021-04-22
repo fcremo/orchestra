@@ -1,0 +1,31 @@
+#@ load("@ytt:data", "data")
+#@ load("@ytt:overlay", "overlay")
+#@ load("/lib/create_component.lib.yml", "single_build_component")
+
+#@ source_url = "https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.16.tar.gz"
+
+#@yaml/text-templated-strings
+---
+#@ def iconv_args():
+configure: |
+  mkdir -p "$BUILD_DIR/"
+  extract.sh --into "$BUILD_DIR/source" (@= source_url @)
+  cd "$BUILD_DIR"
+
+  ./source/configure \
+    --prefix="$ORCHESTRA_ROOT/x86_64-w64-mingw32" \
+    --host=x86_64-w64-mingw32
+build_system: make
+build_dependencies:
+  - host-c-toolchain
+  - glibc
+dependencies:
+  - libffi
+  - zlib
+#@ end
+
+#@overlay/match by=overlay.all, expects=1
+#@overlay/match-child-defaults missing_ok=True
+---
+components:
+  libiconv-windows: #@ single_build_component(**iconv_args())

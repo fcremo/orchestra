@@ -1,0 +1,27 @@
+#@ load("@ytt:data", "data")
+#@ load("@ytt:overlay", "overlay")
+#@ load("/lib/create_component.lib.yml", "single_build_component")
+
+#@ libdl_version = "v1.3.0"
+#@ source_url = "https://github.com/dlfcn-win32/dlfcn-win32/archive/refs/tags/" + libdl_version + ".tar.gz"
+
+#@yaml/text-templated-strings
+---
+#@ def mpfr_args():
+license: COPYING
+configure: |
+  mkdir -p "$BUILD_DIR"
+  extract.sh --into "$BUILD_DIR" (@= source_url @)
+  cd "$BUILD_DIR" && ./configure \
+    --prefix="$ORCHESTRA_ROOT/x86_64-w64-mingw32" \
+    --cross-prefix=x86_64-w64-mingw32-
+build_system: make
+dependencies: []
+build_dependencies: []
+#@ end
+
+#@overlay/match by=overlay.all, expects=1
+#@overlay/match-child-defaults missing_ok=True
+---
+components:
+  libdl-win: #@ single_build_component(**mpfr_args())
