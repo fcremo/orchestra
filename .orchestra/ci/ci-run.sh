@@ -23,8 +23,11 @@
 #   branch name to try first when checking out component sources
 # PUSH_BINARY_ARCHIVES: if == 1, push binary archives
 # PROMOTE_BRANCHES: if == 1, promote next-* branches
-# PUSH_CHANGES:
-#   if == 1, push binary archives and promote next-* branches
+# IGNORE_ALL_NEXT_BRANCHES:
+#   If == 1 the list of branches to try to checkout for the configuration and
+#   the components will not include next-* branches, unless PUSHED_REF specifies
+#   a next-* branch
+# PUSH_CHANGES: if == 1, push binary archives and promote next-* branches
 # REVNG_COMPONENTS_DEFAULT_BUILD: the default build for revng core components
 # PUSH_BINARY_ARCHIVE_EMAIL: used as author's email in binary archive commit
 # PUSH_BINARY_ARCHIVE_NAME: used as author's name in binary archive commit
@@ -96,14 +99,22 @@ EOF
     fi
 fi
 
+BRANCHES_TO_TRY=()
+if [[ -n "$COMPONENT_TARGET_BRANCH" ]]; then
+    BRANCHES_TO_TRY+=("$COMPONENT_TARGET_BRANCH")
+fi
+if [[ "$IGNORE_ALL_NEXT_BRANCHES" == 1 ]]; then
+    BRANCHES_TO_TRY+=(develop master)
+else
+    BRANCHES_TO_TRY+=(next-develop develop next-master master)
+fi
+
 #
 # Install orchestra
 #
 if test -n "$REVNG_ORCHESTRA_URL"; then
-    # COMPONENT_TARGET_BRANCH is not quoted on purpose -- if empty it has to be ignored instead of being expanded to
-    # and empty string
-    for REVNG_ORCHESTRA_TARGET_BRANCH in $COMPONENT_TARGET_BRANCH next-develop develop next-master master; do
-        if pip3 -q install --user "$REVNG_ORCHESTRA_URL@$REVNG_ORCHESTRA_TARGET_BRANCH"; then
+    for REVNG_ORCHESTRA_TARGET_BRANCH in "${BRANCHES_TO_TRY[@]}"; do
+        if pip3 install --user "$REVNG_ORCHESTRA_URL@$REVNG_ORCHESTRA_TARGET_BRANCH"; then
             break
         fi
     done
@@ -164,12 +175,9 @@ if [[ -n "$COMPONENT_TARGET_BRANCH" ]] \
     fi
 fi
 
-cat >> "$USER_OPTIONS" <<EOF
-  - next-develop
-  - develop
-  - next-master
-  - master
-EOF
+for B in "${BRANCHES_TO_TRY[@]}"; do
+    echo "  - $B" >> "$USER_OPTIONS";
+done
 
 # Set default builds
 if [[ -n "$REVNG_COMPONENTS_DEFAULT_BUILD" ]]; then

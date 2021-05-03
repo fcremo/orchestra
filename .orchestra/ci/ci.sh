@@ -9,8 +9,17 @@
 # Optional parameters:
 #
 # PUSHED_REF:
-#   orchestra config commit/branch to use.
-#   Normally set by Gitlab or whoever triggers the CI.
+#   Name of the branch which will be tried to be checked out first. Affects the
+#   configuration and all components. Normally set by Gitlab or whoever triggers
+#   the CI.
+#   Format: refs/heads/<branchname>
+# IGNORE_ALL_NEXT_BRANCHES:
+#   If == 1 the list of branches to try to checkout for the configuration and
+#   the components will not include next-* branches, unless PUSHED_REF specifies
+#   a next-* branch
+# IGNORE_CONFIG_NEXT_BRANCHES:
+#   If == 1 the list of branches to try to checkout for the configuration will
+#   not include next-* branches, unless PUSHED_REF specifies a next-* branch
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 ORCHESTRA_DIR="$DIR/../.."
@@ -57,8 +66,6 @@ if [[ -n "$PUSHED_REF" ]]; then
     fi
 fi
 
-ogit fetch
-
 # If the target branch is not part of the default list and it does not already
 # exist, create it
 if [[ ! "$COMPONENT_TARGET_BRANCH" =~ ^(next-)?(develop|master)$ ]] && \
@@ -68,7 +75,15 @@ if [[ ! "$COMPONENT_TARGET_BRANCH" =~ ^(next-)?(develop|master)$ ]] && \
 fi
 
 # Switch orchestra to the target branch or try the default list
-for B in "$COMPONENT_TARGET_BRANCH" next-develop develop next-master master; do
+if [[ "$IGNORE_ALL_NEXT_BRANCHES" == 1 ]] ||
+    [[ "$IGNORE_CONFIG_NEXT_BRANCHES" == 1 ]]; then
+    BRANCHES_TO_TRY=("$COMPONENT_TARGET_BRANCH" develop master)
+else
+    BRANCHES_TO_TRY=("$COMPONENT_TARGET_BRANCH" next-develop develop next-master master)
+fi
+
+ogit fetch
+for B in "${BRANCHES_TO_TRY[@]}"; do
     if ogit checkout "$B"; then
         ORCHESTRA_TARGET_BRANCH="$B"
         break
