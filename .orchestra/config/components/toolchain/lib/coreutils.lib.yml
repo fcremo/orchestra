@@ -15,6 +15,7 @@ configure: |
   cd "$BUILD_DIR"
   sed -i 's|stdbuf_supported=yes|stdbuf_supported=no|g' "$BUILD_DIR/configure"
 
+  export HARD_FLAGS_LATE="-no-pie -fno-pic -fno-pie -fstack-usage -fno-ipa-stack-alignment"
   "$BUILD_DIR/configure" \
     --disable-dependency-tracking \
     --disable-nls \
@@ -32,6 +33,7 @@ configure: |
     FORCE_UNSAFE_CONFIGURE=1
 install: |
   cd "$BUILD_DIR"
+  export HARD_FLAGS_LATE="-no-pie -fno-pic -fno-pie -fstack-usage"
   (@= make @)
   (@= make @) install
 #@ end
