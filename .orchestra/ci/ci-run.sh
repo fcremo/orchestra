@@ -33,6 +33,7 @@
 # PUSH_BINARY_ARCHIVE_NAME: used as author's name in binary archive commit
 # SSH_PRIVATE_KEY: private key used to push binary archives
 # REVNG_ORCHESTRA_URL: orchestra git repo URL (must be git+ssh:// or git+https://)
+# REVNG_ORCHESTRA_BRANCH: branch to use when installing orchestra from git
 # BUILD_ALL_FROM_SOURCE: if == 1 do not use binary archives and build everything
 
 set -e
@@ -113,11 +114,15 @@ fi
 # Install orchestra
 #
 if test -n "$REVNG_ORCHESTRA_URL"; then
-    for REVNG_ORCHESTRA_TARGET_BRANCH in "${BRANCHES_TO_TRY[@]}"; do
-        if pip3 install --user "$REVNG_ORCHESTRA_URL@$REVNG_ORCHESTRA_TARGET_BRANCH"; then
-            break
-        fi
-    done
+    if [[ -n "$REVNG_ORCHESTRA_BRANCH" ]]; then
+        pip3 install --user "$REVNG_ORCHESTRA_URL@$REVNG_ORCHESTRA_BRANCH"
+    else
+        for REVNG_ORCHESTRA_BRANCH in "${BRANCHES_TO_TRY[@]}"; do
+            if pip3 install --user "$REVNG_ORCHESTRA_URL@$REVNG_ORCHESTRA_BRANCH"; then
+                break
+            fi
+        done
+    fi
 else
     pip3 -q install --user revng-orchestra
 fi
