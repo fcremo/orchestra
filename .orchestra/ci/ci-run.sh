@@ -27,6 +27,7 @@
 #   If == 1 the list of branches to try to checkout for the configuration and
 #   the components will not include next-* branches, unless PUSHED_REF specifies
 #   a next-* branch
+# COMPONENTS_BLACKLIST: space separated list of regexes matching components that will not be built explicitly
 # PUSH_CHANGES: if == 1, push binary archives and promote next-* branches
 # REVNG_COMPONENTS_DEFAULT_BUILD: the default build for revng core components
 # PUSH_BINARY_ARCHIVE_EMAIL: used as author's email in binary archive commit
@@ -143,28 +144,6 @@ REMOTE="$(git remote get-url origin | sed 's|^\([^:]*:\)\([^/]\)|\1/\2|')"
 GITLAB_ROOT="$(dirname "$(dirname "$REMOTE")")"
 echo "${BASE_USER_OPTIONS_YML//\%GITLAB_ROOT\%/$GITLAB_ROOT}" > "$USER_OPTIONS"
 
-# Register target components
-if test -n "$TARGET_COMPONENTS_URL"; then
-    # Add components by repository URL
-    for TARGET_COMPONENT_URL in $TARGET_COMPONENTS_URL; do
-        NEW_COMPONENT="$(orc components --repository-url "$TARGET_COMPONENT_URL" \
-                         | grep '^Component' \
-                         | cut -d' ' -f2)"
-        if test -z "$NEW_COMPONENT"; then
-            log_err "Warning: ignoring URL $TARGET_COMPONENT_URL since it doesn't match any component"
-        else
-            TARGET_COMPONENTS="$NEW_COMPONENT $TARGET_COMPONENTS"
-        fi
-    done
-fi
-
-log "Target components: $TARGET_COMPONENTS"
-
-if test -z "$TARGET_COMPONENTS"; then
-    log "Nothing to do!"
-    exit 1
-fi
-
 # Build branches list
 cat >> "$USER_OPTIONS" <<EOF
 #@overlay/replace
@@ -195,13 +174,22 @@ cat "$USER_OPTIONS"
 
 orc update --no-config
 
-# Print debugging information
-log "Complete dependency graph"
-orc graph "$BUILD_MODE"
-for TARGET_COMPONENT in $TARGET_COMPONENTS; do
-    log "Solved dependency graph for the target component $TARGET_COMPONENT"
-    orc graph --solved "$BUILD_MODE" "$TARGET_COMPONENT"
+# Register target components
+TARGET_COMPONENTS=()
+BLACKLISTED_COMPONENTS=()
+for COMPONENT in $(orc components --json | jq -r ".[].name"); do
+    for BLACKLIST_PATTERN in $COMPONENTS_BLACKLIST; do
+        if [[ $COMPONENT =~ $BLACKLIST_PATTERN ]]; then
+            BLACKLISTED_COMPONENTS+=("$COMPONENT")
+            continue 2
+        fi
+    done
+    TARGET_COMPONENTS+=("$COMPONENT")
 done
+
+# Print debugging information
+log "Blacklisted components: ${BLACKLISTED_COMPONENTS[*]}"
+log "Target components: ${TARGET_COMPONENTS[*]}"
 log "Information about the components"
 orc components --hashes
 log "Binary archives commit"
@@ -212,12 +200,19 @@ done
 #
 # Actually run the build
 #
+FAILED_COMPONENTS=()
 RESULT=0
-for TARGET_COMPONENT in $TARGET_COMPONENTS; do
+for TARGET_COMPONENT in "${TARGET_COMPONENTS[@]}"; do
+    if [[ "$BUILD_ALL_FROM_SOURCE" != 1 ]]; then
+        if orc install --pretend "$TARGET_COMPONENT" &> /dev/null; then
+            log "Target component $TARGET_COMPONENT does not need rebuild"
+            continue
+        fi
+    fi
     log "Building target component $TARGET_COMPONENT"
     if ! orc --quiet install "$BUILD_MODE" --test --create-binary-archives "$TARGET_COMPONENT"; then
+        FAILED_COMPONENTS+=("$TARGET_COMPONENT")
         RESULT=1
-        break
     fi
 done
 
@@ -283,13 +278,11 @@ if [[ "$PUSH_BINARY_ARCHIVES" = 1 ]] || [[ "$PUSH_CHANGES" = 1 ]]; then
         git add .
 
         if ! git diff --cached --quiet; then
-            set +x
             COMMIT_MSG="Automatic binary archives
 
 ORCHESTRA_CONFIG_COMMIT=$(git -C "$ORCHESTRA_ROOT" rev-parse --short HEAD || true)
 ORCHESTRA_CONFIG_BRANCH=$(git -C "$ORCHESTRA_ROOT" name-rev --name-only HEAD || true)
 COMPONENT_TARGET_BRANCH=$COMPONENT_TARGET_BRANCH"
-            set -x
 
             git commit -m "$COMMIT_MSG"
             git status
@@ -310,6 +303,10 @@ COMPONENT_TARGET_BRANCH=$COMPONENT_TARGET_BRANCH"
     done
 else
     log "Skipping binary archives push (PUSH_BINARY_ARCHIVES='$PUSH_BINARY_ARCHIVES', PUSH_CHANGES='$PUSH_CHANGES')"
+fi
+
+if [[ "${#FAILED_COMPONENTS[*]}" -gt 0 ]]; then
+    log_err "The following components failed: ${FAILED_COMPONENTS[*]}}"
 fi
 
 exit "$RESULT"
