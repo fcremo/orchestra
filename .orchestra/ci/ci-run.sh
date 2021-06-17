@@ -36,6 +36,7 @@
 # REVNG_ORCHESTRA_URL: orchestra git repo URL (must be git+ssh:// or git+https://)
 # REVNG_ORCHESTRA_BRANCH: branch to use when installing orchestra from git
 # BUILD_ALL_FROM_SOURCE: if == 1 do not use binary archives and build everything
+# NOTES: echoed at the start of the run, useful for tagging manually executed CI jobs
 
 set -e
 
@@ -59,6 +60,10 @@ function log_err() {
     echo -n '[!]' "$1" > /dev/stderr
     echo -e "${RESET}" > /dev/stderr
 }
+
+if [[ -n "$NOTES" ]]; then
+    log "NOTES: $NOTES"
+fi
 
 PUSH_BINARY_ARCHIVE_EMAIL="${PUSH_BINARY_ARCHIVE_EMAIL:-sysadmin@rev.ng}"
 PUSH_BINARY_ARCHIVE_NAME="${PUSH_BINARY_ARCHIVE_NAME:-rev.ng CI}"
