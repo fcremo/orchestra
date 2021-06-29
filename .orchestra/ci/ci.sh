@@ -2,24 +2,7 @@
 
 # rev.ng CI entrypoint script
 # This script checks out the correct configuration branch and initializes
-# variables for the actual CI script (ci-run.sh)
-#
-# Parameters are supplied as environment variables.
-#
-# Optional parameters:
-#
-# PUSHED_REF:
-#   Name of the branch which will be tried to be checked out first. Affects the
-#   configuration and all components. Normally set by Gitlab or whoever triggers
-#   the CI.
-#   Format: refs/heads/<branchname>
-# IGNORE_ALL_NEXT_BRANCHES:
-#   If == 1 the list of branches to try to checkout for the configuration and
-#   the components will not include next-* branches, unless PUSHED_REF specifies
-#   a next-* branch
-# IGNORE_CONFIG_NEXT_BRANCHES:
-#   If == 1 the list of branches to try to checkout for the configuration will
-#   not include next-* branches, unless PUSHED_REF specifies a next-* branch
+# variables for the actual CI scripts
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 ORCHESTRA_DIR="$DIR/../.."
@@ -54,6 +37,7 @@ set -e
 # If this ref is a branch, it will be used as the first default branch to try
 # for all components and for orchestra configuration
 
+# COMPONENT_TARGET_BRANCH: branch name to try first when checking out component sources
 COMPONENT_TARGET_BRANCH=""
 
 if [[ -n "$PUSHED_REF" ]]; then

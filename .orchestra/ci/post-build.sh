@@ -1,19 +1,26 @@
 #!/bin/bash
 
-# rev.ng main CI script
+# rev.ng CI post-build script
 # This script runs orchestra to build the required components.
-# If the build is successful the pushes the newly produced binary archives.
-# It also records the components HEAD commits so that the post-build script can promote next-* branches.
+# If the build is successful the script can push the newly produced binary
+# archives and promote next-<name> branches to <name>.
 #
 # Parameters are supplied as environment variables.
 #
-# REVNG_ORCHESTRA_URL: orchestra git repo URL (must be git+ssh:// or git+https://)
+# Target component is mandatory and done with these parameters:
+#
+# TARGET_COMPONENTS: list of components to build
+# TARGET_COMPONENTS_URL:
+#   list of glob patterns used to select additional target components
+#   by matching their remote URL
 #
 # Optional parameters:
 #
 # BASE_USER_OPTIONS_YML:
 #   user_options.yml is initialized to this value.
 #   %GITLAB_ROOT% is replaced with the base URL of the Gitlab instance.
+# COMPONENT_TARGET_BRANCH:
+#   branch name to try first when checking out component sources
 # PUSH_BINARY_ARCHIVES: if == 1, push binary archives
 # PROMOTE_BRANCHES: if == 1, promote next-* branches
 # IGNORE_ALL_NEXT_BRANCHES:
@@ -22,8 +29,11 @@
 #   a next-* branch
 # COMPONENTS_BLACKLIST: space separated list of regexes matching components that will not be built explicitly
 # PUSH_CHANGES: if == 1, push binary archives and promote next-* branches
-# REVNG_COMPONENTS_DEFAULT_BUILD: the preferred build for revng core components. Defaults to optimized.
+# REVNG_COMPONENTS_DEFAULT_BUILD: the default build for revng core components
+# PUSH_BINARY_ARCHIVE_EMAIL: used as author's email in binary archive commit
+# PUSH_BINARY_ARCHIVE_NAME: used as author's name in binary archive commit
 # SSH_PRIVATE_KEY: private key used to push binary archives
+# REVNG_ORCHESTRA_URL: orchestra git repo URL (must be git+ssh:// or git+https://)
 # REVNG_ORCHESTRA_BRANCH: branch to use when installing orchestra from git
 # BUILD_ALL_FROM_SOURCE: if == 1 do not use binary archives and build everything
 # NOTES: echoed at the start of the run, useful for tagging manually executed CI jobs
@@ -32,10 +42,6 @@ set -e
 
 CI_SCRIPTS_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 source "$CI_SCRIPTS_ROOT/include/common.sh"
-
-if [[ -n "$NOTES" ]]; then
-    log "NOTES: $NOTES"
-fi
 
 cd "$CI_SCRIPTS_ROOT"
 
@@ -56,89 +62,54 @@ which orc >/dev/null
 log "User options:"
 cat "$USER_OPTIONS"
 
-orc update --no-config
+# Restore the remote cache
+# WARN: Do NOT run `orc update`
+# TODO: ensure that remote_refs_cache.json matches for all the flavors
+CACHE_DIR="$CI_PROJECT_DIR/cache/optimized"
+cp -r "$CACHE_DIR/cache" "$ORCHESTRA_DOTDIR/cache"
+cp "$CACHE_DIR/remote_refs_cache.json" "$ORCHESTRA_DOTDIR/remote_refs_cache.json"
 
-# Select target components
-TARGET_COMPONENTS=()
-BLACKLISTED_COMPONENTS=()
-for COMPONENT in $(orc components --json | jq -r ".[].name"); do
-    for BLACKLIST_PATTERN in $COMPONENTS_BLACKLIST; do
-        if [[ $COMPONENT =~ $BLACKLIST_PATTERN ]]; then
-            BLACKLISTED_COMPONENTS+=("$COMPONENT")
-            continue 2
-        fi
+#
+# Promote `next-*` branches to `*`
+#
+if [[ "$PROMOTE_BRANCHES" = 1 ]] || [[ "$PUSH_CHANGES" = 1 ]]; then
+    # Clone all the components having branch next-*
+    for COMPONENT in $(orc components --json --branch 'next-*' | jq -r ".[].name"); do
+        HEAD_BRANCH="$(orc components --json "$COMPONENT" | jq -r ".[].head_branch_name")"
+        HEAD_COMMIT="$(orc components --json "$COMPONENT" | jq -r ".[].head_commit")"
+
+        # TODO: pick the least bad option
+        # Need one layer of indirection to expand environment variables
+        SOURCE_DIR="$(orc shell -c "$COMPONENT" 'eval' 'printf $SOURCE_DIR')"
+        # SOURCE_DIR="$(orc environment "$COMPONENT" | grep -Po '(?<=SOURCE_DIR=")[^"]*')"
+
+        log "Cloning $COMPONENT"
+        orc clone --no-force "$COMPONENT"
+
+        git -C "$SOURCE_DIR" branch -f "$HEAD_BRANCH" "$HEAD_COMMIT"
+        git -C "$SOURCE_DIR" switch "$HEAD_BRANCH"
     done
-    TARGET_COMPONENTS+=("$COMPONENT")
-done
 
-if [[ "${#TARGET_COMPONENTS[*]}" -eq 0 ]]; then
-    # It's important to fail here because otherwise branch promotion would run
-    # even though no components have been built
-    log_err "Nothing to do"
-    exit 1
-fi
-
-# Print debugging information
-log "Blacklisted components: ${BLACKLISTED_COMPONENTS[*]}"
-log "Target components: ${TARGET_COMPONENTS[*]}"
-log "Information about the components"
-orc components --hashes
-log "Binary archives commit"
-for BINARY_ARCHIVE_PATH in $(orc ls --binary-archives); do
-    log "Commit for $BINARY_ARCHIVE_PATH: $(git -C "$BINARY_ARCHIVE_PATH" rev-parse HEAD)"
-done
-
-if [[ "$BUILD_ALL_FROM_SOURCE" == 1 ]]; then
-    log "Build mode: building all components from source"
-    BUILD_MODE="-B"
-else
-    log "Build mode: binary archives enabled"
-    BUILD_MODE="-b"
-fi
-
-#
-# Actually run the build
-#
-FAILED_COMPONENTS=()
-RESULT=0
-for TARGET_COMPONENT in "${TARGET_COMPONENTS[@]}"; do
-    if [[ "$BUILD_ALL_FROM_SOURCE" != 1 ]]; then
-        if orc install --pretend "$TARGET_COMPONENT" &> /dev/null; then
-            log "Target component $TARGET_COMPONENT does not need rebuild"
-            continue
-        fi
-    fi
-    log "Building target component $TARGET_COMPONENT"
-    if ! orc --quiet install "$BUILD_MODE" --test --create-binary-archives "$TARGET_COMPONENT"; then
-        FAILED_COMPONENTS+=("$TARGET_COMPONENT")
-        RESULT=1
-    fi
-done
-
-#
-# Record next-* head commits for promotion
-#
-if test "$RESULT" -eq 0; then
-    log "Recording information for next-* branches promotion"
-
+    # Promote next-* to *.
     # We also promote orchestra config because fix-binary-archive-symlinks
     # uses the current branch name
-    CACHE_DIR="$CI_PROJECT_DIR/cache/$REVNG_COMPONENTS_DEFAULT_BUILD"
-    mkdir -p "$CACHE_DIR"
-    cp -r "$ORCHESTRA_DOTDIR/cache" "$CACHE_DIR/cache"
-    cp "$ORCHESTRA_DOTDIR/remote_refs_cache.json" "$CACHE_DIR/remote_refs_cache.json"
+    for SOURCE_PATH in $(orc ls --git-sources) "$ORCHESTRA_ROOT"; do
+        if test -e "$SOURCE_PATH/.git"; then
+            cd "$SOURCE_PATH"
+            BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+            if test "${BRANCH:0:5}" == "next-"; then
+                PUSH_TO="${BRANCH:5}"
+                git branch -d "$PUSH_TO" || true
+                git checkout -b "$PUSH_TO" "$BRANCH"
+                git push origin "$PUSH_TO"
+            fi
+            cd -
+        fi
+    done
 
-    #for SOURCE_PATH in $(orc ls --git-sources) "$ORCHESTRA_ROOT"; do
-    #    if test -e "$SOURCE_PATH/.git"; then
-    #        cd "$SOURCE_PATH"
-    #        BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-    #        COMMIT="$(git rev-parse --short HEAD)"
-    #        if test "${BRANCH:0:5}" == "next-"; then
-    #            echo "$SOURCE_PATH;$BRANCH;$COMMIT" >> "$CI_PROJECT_DIR/cache/heads/$REVNG_COMPONENTS_DEFAULT_BUILD.csv"
-    #        fi
-    #        cd -
-    #    fi
-    #done
+    orc fix-binary-archives-symlinks
+else
+    log "Skipping branch promotion (PROMOTE_BRANCHES='$PROMOTE_BRANCHES', PUSH_CHANGES='$PUSH_CHANGES')"
 fi
 
 if [[ "$PUSH_BINARY_ARCHIVES" = 1 ]] || [[ "$PUSH_CHANGES" = 1 ]]; then
