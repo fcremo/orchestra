@@ -91,14 +91,19 @@ if [[ "${#TARGET_COMPONENTS[*]}" -eq 0 ]]; then
     exit 1
 fi
 
+ARTIFACTS_DIR="$CI_PROJECT_DIR/artifacts/$REVNG_COMPONENTS_DEFAULT_BUILD"
+mkdir -p "$ARTIFACTS_DIR"
+
+LOGS_DIR="$CI_PROJECT_DIR/artifacts/$REVNG_COMPONENTS_DEFAULT_BUILD/logs"
+mkdir -p "$LOGS_DIR"
+
 # Print debugging information
 log "Blacklisted components: ${BLACKLISTED_COMPONENTS[*]}"
 log "Target components: ${TARGET_COMPONENTS[*]}"
-log "Information about the components"
-orc components --hashes
-log "Binary archives commit"
+orc components --json > "$LOGS_DIR/components.json"
 for BINARY_ARCHIVE_PATH in $(orc ls --binary-archives); do
-    log "Commit for $BINARY_ARCHIVE_PATH: $(git -C "$BINARY_ARCHIVE_PATH" rev-parse HEAD)"
+    BINARY_ARCHIVE_COMMIT="$(git -C "$BINARY_ARCHIVE_PATH" rev-parse HEAD)"
+    echo "Commit for $BINARY_ARCHIVE_PATH: $BINARY_ARCHIVE_COMMIT" >> "$LOGS_DIR/binary_archives_head"
 done
 
 if [[ "$BUILD_ALL_FROM_SOURCE" == 1 ]]; then
@@ -127,9 +132,6 @@ for TARGET_COMPONENT in "${TARGET_COMPONENTS[@]}"; do
         RESULT=1
     fi
 done
-
-ARTIFACTS_DIR="$CI_PROJECT_DIR/artifacts/$REVNG_COMPONENTS_DEFAULT_BUILD"
-mkdir -p "$ARTIFACTS_DIR"
 
 #
 # Record next-* head commits for promotion
@@ -219,7 +221,7 @@ else
 fi
 
 if [[ "${#FAILED_COMPONENTS[*]}" -gt 0 ]]; then
-    log_err "The following components failed: ${FAILED_COMPONENTS[*]}}"
+    log_err "The following components failed: ${FAILED_COMPONENTS[*]}"
 fi
 
 exit "$RESULT"
