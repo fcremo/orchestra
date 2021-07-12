@@ -62,115 +62,122 @@ which orc >/dev/null
 log "User options:"
 cat "$USER_OPTIONS"
 
-# Restore the remote cache
-# WARN: Do NOT run `orc update`
-# TODO: ensure that remote_refs_cache.json matches for all the flavors
-CACHE_DIR="$CI_PROJECT_DIR/cache/optimized"
+# `orc update` to clone the binary archives
+orc update
+
+BUILD_FLAVORS=(optimized release debug)
+ARTIFACTS_DIR="$CI_PROJECT_DIR/artifacts"
+
+# Restore the remote cache that was used during the build
+# TODO: ensure that remote_refs_cache.json matches for all the builds
+# WARNING: Do NOT run `orc update` after this point!
+rm -rf "$ORCHESTRA_DOTDIR/cache"
+CACHE_DIR="$ARTIFACTS_DIR/optimized/cache"
 cp -r "$CACHE_DIR/cache" "$ORCHESTRA_DOTDIR/cache"
 cp "$CACHE_DIR/remote_refs_cache.json" "$ORCHESTRA_DOTDIR/remote_refs_cache.json"
 
-#
-# Promote `next-*` branches to `*`
-#
-if [[ "$PROMOTE_BRANCHES" = 1 ]] || [[ "$PUSH_CHANGES" = 1 ]]; then
-    # Clone all the components having branch next-*
-    for COMPONENT in $(orc components --json --branch 'next-*' | jq -r ".[].name"); do
-        HEAD_BRANCH="$(orc components --json "$COMPONENT" | jq -r ".[].head_branch_name")"
-        HEAD_COMMIT="$(orc components --json "$COMPONENT" | jq -r ".[].head_commit")"
-
-        # TODO: pick the least bad option
-        # Need one layer of indirection to expand environment variables
-        SOURCE_DIR="$(orc shell -c "$COMPONENT" 'eval' 'printf $SOURCE_DIR')"
-        # SOURCE_DIR="$(orc environment "$COMPONENT" | grep -Po '(?<=SOURCE_DIR=")[^"]*')"
-
-        log "Cloning $COMPONENT"
-        orc clone --no-force "$COMPONENT"
-
-        git -C "$SOURCE_DIR" branch -f "$HEAD_BRANCH" "$HEAD_COMMIT"
-        git -C "$SOURCE_DIR" switch "$HEAD_BRANCH"
-    done
-
-    # Promote next-* to *.
-    # We also promote orchestra config because fix-binary-archive-symlinks
-    # uses the current branch name
-    for SOURCE_PATH in $(orc ls --git-sources) "$ORCHESTRA_ROOT"; do
-        if test -e "$SOURCE_PATH/.git"; then
-            cd "$SOURCE_PATH"
-            BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-            if test "${BRANCH:0:5}" == "next-"; then
-                PUSH_TO="${BRANCH:5}"
-                git branch -d "$PUSH_TO" || true
-                git checkout -b "$PUSH_TO" "$BRANCH"
-                git push origin "$PUSH_TO"
-            fi
-            cd -
+function all_builds_successful () {
+    for BUILD in "${BUILD_FLAVORS[@]}"; do
+        local BUILD_STATUS_FILE="$CI_PROJECT_DIR/artifacts/$BUILD/build_status"
+        if ! [[ -e "$BUILD_STATUS_FILE" ]] || ! [[ "$(cat "$BUILD_STATUS_FILE")" == "SUCCESS" ]]; then
+            return 1
         fi
     done
+    return 0
+}
 
-    orc fix-binary-archives-symlinks
+# Promote `next-*` branches to `*`
+if [[ "$PROMOTE_BRANCHES" = 1 ]] || [[ "$PUSH_CHANGES" = 1 ]]; then
+    if all_builds_successful; then
+        # Clone all the components having branch next-*
+        for COMPONENT in $(orc components --json --branch 'next-*' | jq -r ".[].name"); do
+            HEAD_BRANCH="$(orc components --json "$COMPONENT" | jq -r ".[].head_branch_name")"
+            HEAD_COMMIT="$(orc components --json "$COMPONENT" | jq -r ".[].head_commit")"
+
+            # TODO: pick the least bad option
+            # Need one layer of indirection to expand environment variables
+            SOURCE_DIR="$(orc shell -c "$COMPONENT" 'eval' 'printf $SOURCE_DIR')"
+            # SOURCE_DIR="$(orc environment "$COMPONENT" | grep -Po '(?<=SOURCE_DIR=")[^"]*')"
+
+            log "Cloning $COMPONENT"
+            orc clone --no-force "$COMPONENT"
+
+            # Restore component the head commit it had during the build
+            git -C "$SOURCE_DIR" checkout -B "$HEAD_BRANCH" "$HEAD_COMMIT"
+        done
+
+        # Promote next-* to *.
+        # We also promote orchestra config because fix-binary-archive-symlinks
+        # uses the current branch name
+        for SOURCE_PATH in $(orc ls --git-sources) "$ORCHESTRA_ROOT"; do
+            if test -e "$SOURCE_PATH/.git"; then
+                cd "$SOURCE_PATH"
+                BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+                if test "${BRANCH:0:5}" == "next-"; then
+                    PUSH_TO="${BRANCH:5}"
+                    git branch -d "$PUSH_TO" || true
+                    git checkout -b "$PUSH_TO" "$BRANCH"
+                    git push origin "$PUSH_TO"
+                fi
+                cd -
+            fi
+        done
+
+        orc fix-binary-archives-symlinks
+    else
+        log_err "Not all builds succeeded, skipping branch promotion"
+    fi
 else
     log "Skipping branch promotion (PROMOTE_BRANCHES='$PROMOTE_BRANCHES', PUSH_CHANGES='$PUSH_CHANGES')"
 fi
 
+# Push binary archives changes
 if [[ "$PUSH_BINARY_ARCHIVES" = 1 ]] || [[ "$PUSH_CHANGES" = 1 ]]; then
-    # Ensure we have git lfs
-    git lfs >& /dev/null
+    if all_builds_successful; then
+        # Push to binary archives
+        for BINARY_ARCHIVE_PATH in $(orc ls --binary-archives); do
+            cd "$BINARY_ARCHIVE_PATH"
 
-    # Remove old binary archives
-    orc binary-archives clean
-
-    #
-    # Push to binary archives
-    #
-    for BINARY_ARCHIVE_PATH in $(orc ls --binary-archives); do
-
-        cd "$BINARY_ARCHIVE_PATH"
-
-        git config user.email "$PUSH_BINARY_ARCHIVE_EMAIL"
-        git config user.name "$PUSH_BINARY_ARCHIVE_NAME"
-
-        # Ensure we track the correct files
-        git lfs track "*.tar.*"
-        git add .gitattributes
-        if ! git diff --staged --exit-code -- .gitattributes > /dev/null; then
-            git commit -m'Initialize .gitattributes'
-        fi
-
-        ls -lh
-        git add .
-
-        if ! git diff --cached --quiet; then
-            COMMIT_MSG="$(
-                echo "Automatic binary archives"
-                echo
-                echo "ORCHESTRA_CONFIG_COMMIT=$(git -C "$ORCHESTRA_ROOT" rev-parse --short HEAD || true)"
-                echo "ORCHESTRA_CONFIG_BRANCH=$(git -C "$ORCHESTRA_ROOT" name-rev --name-only HEAD || true)"
-                echo "COMPONENT_TARGET_BRANCH=$COMPONENT_TARGET_BRANCH"
-            )"
-
-            git commit -m "$COMMIT_MSG"
-            git status
-            git stash
-            GIT_LFS_SKIP_SMUDGE=1 git fetch
-            GIT_LFS_SKIP_SMUDGE=1 git rebase -Xtheirs origin/master
-
+            git config user.email "$PUSH_BINARY_ARCHIVE_EMAIL"
+            git config user.name "$PUSH_BINARY_ARCHIVE_NAME"
             git config --add lfs.dialtimeout 300
             git config --add lfs.tlstimeout 300
             git config --add lfs.activitytimeout 300
             git config --add lfs.keepalive 300
+
+            # Ensure we track the correct files
+            git lfs track "*.tar.*"
+            git add .gitattributes
+            if ! git diff --staged --exit-code -- .gitattributes > /dev/null; then
+                git commit -m'Initialize .gitattributes'
+            fi
+
+            # Consolidate all branches into master
+            BINARY_ARCHIVE_BRANCHES=()
+            for BUILD in "${BUILD_FLAVORS[@]}"; do
+                BUILD_ARTIFACTS_DIR="$ARTIFACTS_DIR/$BUILD"
+                BUILD_BINARY_ARCHIVE_BRANCH_FILE="$BUILD_ARTIFACTS_DIR/binary_archive_branch_name"
+                BINARY_ARCHIVE_BRANCHES+=("$(cat "$BUILD_BINARY_ARCHIVE_BRANCH_FILE")")
+            done
+            git fetch
+            GIT_LFS_SKIP_SMUDGE=1 git merge --no-ff "${BINARY_ARCHIVE_BRANCHES[@]}"
+            # TODO: Remove build-specific branches?
+            # git branch -D "${BINARY_ARCHIVE_BRANCHES[@]}"
+            # also remember to add --prune or --mirror to git push
+
+            # Push changes
             git push
             git lfs push origin master
-        else
-            log "No changes to push for $BINARY_ARCHIVE_PATH"
-        fi
-
-    done
+        done
+    else
+        log_err "Not all builds succeeded, skipping binary archives push"
+    fi
 else
     log "Skipping binary archives push (PUSH_BINARY_ARCHIVES='$PUSH_BINARY_ARCHIVES', PUSH_CHANGES='$PUSH_CHANGES')"
 fi
 
-if [[ "${#FAILED_COMPONENTS[*]}" -gt 0 ]]; then
-    log_err "The following components failed: ${FAILED_COMPONENTS[*]}}"
+if all_builds_successful; then
+    exit 0
+else
+    exit 1
 fi
-
-exit "$RESULT"

@@ -43,6 +43,12 @@ else
     BRANCHES_TO_TRY+=(next-develop develop next-master master)
 fi
 
+if [[ -n "$REVNG_ORCHESTRA_BRANCH" ]]; then
+    REVNG_ORCHESTRA_BRANCHES_TO_TRY=("$REVNG_ORCHESTRA_BRANCH")
+else
+    REVNG_ORCHESTRA_BRANCHES_TO_TRY=("${BRANCHES_TO_TRY[@]}")
+fi
+
 if [[ -z "$REVNG_COMPONENTS_DEFAULT_BUILD" ]]; then
     REVNG_COMPONENTS_DEFAULT_BUILD=optimized
 fi
