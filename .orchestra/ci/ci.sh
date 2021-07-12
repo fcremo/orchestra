@@ -2,7 +2,9 @@
 
 # rev.ng CI entrypoint script
 # This script checks out the correct configuration branch and initializes
-# variables for the actual CI scripts
+# variables, then it runs the appropriate script for the given CI stage
+# Parameters:
+#  $1 - CI stage: [build|post-build]
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 ORCHESTRA_DIR="$DIR/../.."
@@ -29,6 +31,11 @@ function log_err() {
 }
 
 set -e
+
+if ! [[ "$1" =~ ^(post-)?build$ ]]; then
+    log_err "The first parameter of ci.sh must be 'build' or 'post-build'!"
+    exit 1
+fi
 
 # Determine target branch
 #
@@ -86,4 +93,8 @@ export COMPONENT_TARGET_BRANCH
 
 # Run "true" CI script
 log "Starting ci-run with COMPONENT_TARGET_BRANCH=$COMPONENT_TARGET_BRANCH"
-"$DIR/ci-run.sh"
+if [[ "$1" == "build" ]]; then
+    "$DIR/ci-run.sh"
+else
+    "$DIR/post-build.sh"
+fi
