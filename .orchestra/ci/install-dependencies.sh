@@ -4,6 +4,10 @@ set -e
 
 export DEBIAN_FRONTEND=noninteractive
 
+# Temporary workaround
+# packagecloud.io is refusing to serve git-lfs packages
+rm -f /etc/apt/sources.list.d/github_git-lfs.list &> /dev/null
+
 apt-get -qq update
 
 apt-get -qq install --no-install-recommends --yes \
@@ -73,6 +77,16 @@ apt-get -qq install --no-install-recommends --yes \
 pip3 -q install --user --upgrade setuptools wheel mako meson==0.56.2 pyelftools pygraphviz==1.6
 
 if ! which git-lfs &> /dev/null; then
-  curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash
-  apt-get -qq install --no-install-recommends --yes git-lfs
+  LFS_ARCHIVE_URL="https://github.com/git-lfs/git-lfs/releases/download/v2.13.3/git-lfs-linux-amd64-v2.13.3.tar.gz"
+  wget -o /tmp/git-lfs.tar.gz "$LFS_ARCHIVE_URL"
+  mkdir -p /tmp/lfs-install
+  pushd /tmp/lfs-install &>/dev/null
+  tar xf /tmp/git-lfs.tar.gz
+  /tmp/lfs-install/install.sh
+  popd
+fi
+
+# Ensure git-lfs is available
+if ! which git-lfs &> /dev/null; then
+  exit 1
 fi
